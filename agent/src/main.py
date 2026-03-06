@@ -1,93 +1,150 @@
-"""FastAPI server para o Agent."""
+"""FastAPI server with streaming support."""
 
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
-from .graph import create_graph
-from .schemas import AgentMetadata, AgentRequest, AgentResponse, ConversationState, HistoryMessage
-
-# Configuração de logging seguro (sem conteúdo de mensagens)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+from .core.config import settings
+from .core.logger import get_logger
+from .graph.main_graph import main_graph
+from .state.schema import (
+    AgentRequest,
+    AgentResponse,
+    IntentMetadata,
+    ResponseMetadata,
+    RoutingMetadata,
 )
-logger = logging.getLogger(__name__)
+
+# Logger
+logger = get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Lifecycle do app."""
-    logger.info("Agent iniciado")
+    """Application lifecycle."""
+    logger.info("Agent service started", version="0.2.0")
     yield
-    logger.info("Agent finalizado")
+    logger.info("Agent service stopped")
 
 
 app = FastAPI(
-    title="AMIGO Agent",
-    description="Motor de IA para assistência em saúde mental",
-    version="0.1.0",
+    title="Agent Service",
+    description="Multi-level AI inference engine",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
-# CORS para comunicação com Backend
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Em produção, especificar domínios
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Grafo global (em produção, considerar pool)
-graph = create_graph()
-
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    """Health check."""
-    return {"status": "healthy"}
+    """Health check endpoint."""
+    return {"status": "healthy", "version": "0.2.0"}
 
 
 @app.post("/chat", response_model=AgentResponse)
 async def chat(request: AgentRequest) -> AgentResponse:
-    """Endpoint principal de chat."""
-    # Log seguro: apenas session_id, sem conteúdo
-    logger.info(f"Processando mensagem para sessão: {request.session_id}")
+    """Main chat endpoint."""
+    logger.info("Processing message", session_id=request.session_id)
 
     try:
-        # Prepara estado inicial
-        state = ConversationState(
-            messages=request.history,
-            current_message=request.message,
-            session_id=request.session_id,
-        )
+        # Prepare initial state
+        initial_state = {
+            "session_id": request.session_id,
+            "thread_id": request.session_id,
+            "messages": [
+                {
+                    "role": msg.role,
+                    "content": msg.content,
+                    "timestamp": msg.timestamp.isoformat(),
+                }
+                for msg in request.history
+            ],
+            "current_message": request.message,
+            "intent_score": 0.0,
+            "intent_factors": [],
+            "retrieved_context": "",
+            "response": "",
+            "is_compliant": True,
+            "compliance_issues": [],
+            "should_route": False,
+            "route_reason": None,
+            "route_target": 1,
+            "model_used": settings.default_model,
+            "tokens_used": 0,
+        }
 
-        # Invoca grafo com checkpoint
+        # Invoke main graph
         config = {"configurable": {"thread_id": request.session_id}}
-        result = graph.invoke(state, config)
+        result = main_graph.invoke(initial_state, config)
 
-        # Constrói resposta
+        # Determine intent level
+        intent_score = result.get("intent_score", 0.0)
+        if intent_score >= settings.intent_threshold_critical:
+            intent_level = "critical"
+        elif intent_score >= settings.intent_threshold_high:
+            intent_level = "high"
+        elif intent_score >= settings.intent_threshold_medium:
+            intent_level = "medium"
+        else:
+            intent_level = "low"
+
+        # Build response
         return AgentResponse(
             session_id=request.session_id,
-            response=result["response"],
-            metadata=AgentMetadata(
-                model="gpt-4",
-                tokens=len(result["response"].split()),  # Aproximação
-                should_handover=result.get("should_handover", False),
-                handover_reason=result.get("handover_reason"),
+            response=result.get("response", ""),
+            metadata=ResponseMetadata(
+                model=result.get("model_used", settings.default_model),
+                tokens=result.get("tokens_used", 0),
+                intent=IntentMetadata(
+                    score=intent_score,
+                    factors=result.get("intent_factors", []),
+                    level=intent_level,
+                ),
+                routing=RoutingMetadata(
+                    should_route=result.get("should_route", False),
+                    reason=result.get("route_reason"),
+                    target_level=result.get("route_target", 1),
+                ),
+                compliance_passed=result.get("is_compliant", True),
             ),
         )
 
     except Exception as e:
-        logger.error(f"Erro ao processar sessão {request.session_id}: {type(e).__name__}")
-        raise HTTPException(status_code=500, detail="Erro interno do agent") from e
+        logger.error(
+            "Error processing message",
+            session_id=request.session_id,
+            error=str(type(e).__name__),
+        )
+        raise HTTPException(status_code=500, detail="Internal agent error") from e
+
+
+@app.post("/chat/stream")
+async def chat_stream(request: AgentRequest) -> StreamingResponse:
+    """Streaming chat endpoint (future implementation)."""
+    # TODO: Implement streaming with astream()
+    raise HTTPException(status_code=501, detail="Streaming not implemented yet")
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        log_level=settings.log_level.lower(),
+    )
