@@ -1,4 +1,4 @@
-"""Routing decision subgraph."""
+"""Human-in-the-loop (HITL) routing subgraph."""
 
 from langgraph.graph import StateGraph
 
@@ -10,9 +10,9 @@ from ...tools.routing_signal import routing_signal
 logger = get_logger(__name__)
 
 
-async def routing_decision_node(state: GraphState) -> dict:
-    """Routing decision logic."""
-    logger.info("Evaluating routing decision", session_id=state["session_id"])
+async def hitl_decision_node(state: GraphState) -> dict:
+    """HITL routing decision logic."""
+    logger.info("Evaluating HITL routing decision", session_id=state["session_id"])
 
     should_route = False
     reason = None
@@ -44,7 +44,7 @@ async def routing_decision_node(state: GraphState) -> dict:
 
     if should_route:
         logger.info(
-            "Routing required",
+            "HITL routing required",
             session_id=state["session_id"],
             reason=reason,
             target_level=target_level,
@@ -66,15 +66,15 @@ async def routing_decision_node(state: GraphState) -> dict:
     }
 
 
-def create_routing_subgraph() -> StateGraph:
-    """Create routing decision subgraph."""
+def create_hitl_subgraph() -> StateGraph:
+    """Create HITL routing subgraph."""
     workflow = StateGraph(GraphState)
 
     # Add node
-    workflow.add_node("decide", routing_decision_node)
+    workflow.add_node("hitl_decide", hitl_decision_node)
 
     # Define flow
-    workflow.set_entry_point("decide")
-    workflow.set_finish_point("decide")
+    workflow.set_entry_point("hitl_decide")
+    workflow.set_finish_point("hitl_decide")
 
     return workflow.compile()

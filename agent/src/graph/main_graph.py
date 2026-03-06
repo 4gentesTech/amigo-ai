@@ -9,8 +9,8 @@ from ..nodes.guardrails import guardrails_node
 from ..nodes.intent_analysis import intent_analysis_node
 from ..nodes.validation import validation_node
 from ..state.state import GraphState
-from .subgraphs.retrieval import create_retrieval_subgraph
-from .subgraphs.routing import create_routing_subgraph
+from .subgraphs.hitl_graph import create_hitl_subgraph
+from .subgraphs.rag_graph import create_rag_subgraph
 
 logger = get_logger(__name__)
 
@@ -18,9 +18,9 @@ logger = get_logger(__name__)
 def should_continue_to_generator(state: GraphState) -> str:
     """Decide whether to continue to generation or route immediately."""
     if state.get("should_route") and state.get("route_target") == 3:
-        # Critical intent: immediate routing
-        logger.warning("Critical routing - skipping generation", session_id=state["session_id"])
-        return "route"
+        # Critical intent: immediate HITL routing
+        logger.warning("Critical HITL routing - skipping generation", session_id=state["session_id"])
+        return "hitl"
     return "continue"
 
 
@@ -31,10 +31,10 @@ def create_main_graph() -> StateGraph:
     # Add main nodes
     workflow.add_node("guardrails", guardrails_node)
     workflow.add_node("intent_analysis", intent_analysis_node)
-    workflow.add_node("retrieval", create_retrieval_subgraph())
+    workflow.add_node("rag", create_rag_subgraph())
     workflow.add_node("generator", generator_node)
     workflow.add_node("validation", validation_node)
-    workflow.add_node("routing", create_routing_subgraph())
+    workflow.add_node("hitl", create_hitl_subgraph())
 
     # Define flow
     workflow.set_entry_point("guardrails")
@@ -42,22 +42,22 @@ def create_main_graph() -> StateGraph:
     # Linear flow with conditional decision
     workflow.add_edge("guardrails", "intent_analysis")
 
-    # After intent analysis, decide whether to continue or route
+    # After intent analysis, decide whether to continue or route to HITL
     workflow.add_conditional_edges(
         "intent_analysis",
         should_continue_to_generator,
         {
-            "continue": "retrieval",
-            "route": "routing",
+            "continue": "rag",
+            "hitl": "hitl",
         },
     )
 
-    workflow.add_edge("retrieval", "generator")
+    workflow.add_edge("rag", "generator")
     workflow.add_edge("generator", "validation")
-    workflow.add_edge("validation", "routing")
+    workflow.add_edge("validation", "hitl")
 
-    # Routing is the final point
-    workflow.set_finish_point("routing")
+    # HITL is the final point
+    workflow.set_finish_point("hitl")
 
     # Compile with memory checkpoint
     logger.info("Compiling main graph with memory checkpointer")

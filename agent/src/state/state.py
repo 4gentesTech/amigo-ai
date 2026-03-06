@@ -3,36 +3,29 @@
 from typing import Annotated, TypedDict
 
 
-class GraphState(TypedDict):
-    """Shared state across all graph nodes."""
+from typing import Annotated, TypedDict, List, Dict, Any, Optional
+from langgraph.graph.message import add_messages
+from langchain_core.messages import BaseMessage
 
-    # Identification
+class AgentState(TypedDict):
+    # --- Campos CORE (Presentes em todos os nós/grafos) ---
+    # Histórico unificado de mensagens
+    messages: Annotated[List[BaseMessage], add_messages]
+    
+    # IDs de rastreio (vindo do Go/Gateway)
     session_id: str
     thread_id: str
+    
+    # Resposta final ou parcial formatada
+    response: Optional[str]
 
-    # Messages
-    messages: Annotated[list[dict], "Message history"]
-    current_message: str
-
-    # Intent analysis
-    intent_score: Annotated[float, "Intent/risk score from 0-1"]
-    intent_factors: Annotated[list[str], "Detected intent factors"]
-
-    # Context retrieval
-    retrieved_context: Annotated[str, "Context from vector store"]
-
-    # Generation
-    response: str
-
-    # Validation
-    is_compliant: bool
-    compliance_issues: Annotated[list[str], "Detected compliance issues"]
-
-    # Routing
-    should_route: bool
-    route_reason: str | None
-    route_target: Annotated[int, "Target level: 1=AI, 2=Human, 3=Professional"]
-
-    # Metadata
-    model_used: str
-    tokens_used: int
+    # --- Campos de CONTROLE (Lógica de Fluxo) ---
+    # Determina o próximo passo (ex: 'agent', 'handover', 'end')
+    next_step: str
+    
+    # --- Campo METADATA (Extensível e isolado) ---
+    # Aqui entram risk_score, flags de segurança, infos do RAG, etc.
+    metadata: Dict[str, Any]
+    
+    # Logs estruturados da execução atual (telemetria volátil)
+    execution_logs: List[Dict[str, Any]]
